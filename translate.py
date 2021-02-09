@@ -40,11 +40,14 @@ def translate_sentence(sentence, model, opt, SRC, TRG):
         if SRC.vocab.stoi[tok] != 0 or opt.floyd == True:
             indexed.append(SRC.vocab.stoi[tok])
         else:
+            print("getting synonym on", tok)
             indexed.append(get_synonym(tok, SRC))
+    print('indexed', indexed)
     sentence = Variable(torch.LongTensor([indexed]))
     if opt.device == 0:
         sentence = sentence.cuda()
-    
+    print(sentence)
+    input("hiiiii")
     sentence = beam_search(sentence, model, SRC, TRG, opt)
 
     return  multiple_replace({' ?' : '?',' !':'!',' .':'.','\' ':'\'',' ,':','}, sentence)

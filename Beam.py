@@ -5,7 +5,6 @@ import math
 
 
 def init_vars(src, model, SRC, TRG, opt):
-    
     init_tok = TRG.vocab.stoi['<sos>']
     src_mask = (src != SRC.vocab.stoi['<pad>']).unsqueeze(-2)
     e_output = model.encoder(src, src_mask)
@@ -36,8 +35,8 @@ def init_vars(src, model, SRC, TRG, opt):
     
     return outputs, e_outputs, log_scores
 
+
 def k_best_outputs(outputs, out, log_scores, i, k):
-    
     probs, ix = out[:, -1].data.topk(k)
     log_probs = torch.Tensor([math.log(p) for p in probs.data.view(-1)]).view(k, -1) + log_scores.transpose(0,1)
     k_probs, k_ix = log_probs.view(-1).topk(k)
@@ -52,9 +51,8 @@ def k_best_outputs(outputs, out, log_scores, i, k):
     
     return outputs, log_scores
 
-def beam_search(src, model, SRC, TRG, opt):
-    
 
+def beam_search(src, model, SRC, TRG, opt):
     outputs, e_outputs, log_scores = init_vars(src, model, SRC, TRG, opt)
     eos_tok = TRG.vocab.stoi['<eos>']
     src_mask = (src != SRC.vocab.stoi['<pad>']).unsqueeze(-2)
@@ -70,12 +68,12 @@ def beam_search(src, model, SRC, TRG, opt):
     
         outputs, log_scores = k_best_outputs(outputs, out, log_scores, i, opt.k)
         
-        ones = (outputs==eos_tok).nonzero() # Occurrences of end symbols for all input sentences.
+        ones = (outputs == eos_tok).nonzero()  # Occurrences of end symbols for all input sentences.
         sentence_lengths = torch.zeros(len(outputs), dtype=torch.long).cuda()
         for vec in ones:
             i = vec[0]
-            if sentence_lengths[i]==0: # First end symbol has not been found yet
-                sentence_lengths[i] = vec[1] # Position of first end symbol
+            if sentence_lengths[i] == 0:  # First end symbol has not been found yet
+                sentence_lengths[i] = vec[1]  # Position of first end symbol
 
         num_finished_sentences = len([s for s in sentence_lengths if s > 0])
 
@@ -87,9 +85,26 @@ def beam_search(src, model, SRC, TRG, opt):
             break
     
     if ind is None:
-        length = (outputs[0]==eos_tok).nonzero()[0]
-        return ' '.join([TRG.vocab.itos[tok] for tok in outputs[0][1:length]])
+        length = (outputs[0] == eos_tok).nonzero()[0]
+        built_string = ''
+        for tok in outputs[0][1:length]:
+            temp_tok = TRG.vocab.itos[tok]
+            if temp_tok.startswith('%'):
+                built_string += temp_tok[1:]
+            else:
+                built_string += ' ' + temp_tok
+        return built_string.strip()
+        # return ' '.join([TRG.vocab.itos[tok] for tok in outputs[0][1:length]])
     
     else:
-        length = (outputs[ind]==eos_tok).nonzero()[0]
-        return ' '.join([TRG.vocab.itos[tok] for tok in outputs[ind][1:length]])
+        length = (outputs[ind] == eos_tok).nonzero()[0]
+
+        built_string = ''
+        for tok in outputs[ind][1:length]:
+            temp_tok = TRG.vocab.itos[tok]
+            if temp_tok.startswith('%'):
+                built_string += temp_tok[1:]
+            else:
+                built_string += ' ' + temp_tok
+        return built_string.strip()
+        # return ' '.join([TRG.vocab.itos[tok] for tok in outputs[ind][1:length]])
