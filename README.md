@@ -21,7 +21,7 @@ Each -in.txt / -out.txt file should contain parallel sentences separated by new 
 
 To begin training, run this code:
 ```
-python train.py -data_path your_data_folder_path
+python train.py -data_path your_data_folder_path -output_dir your_folder_to_save_results
 ```
 
 Additional parameters:<br />
