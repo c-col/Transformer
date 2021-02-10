@@ -29,10 +29,6 @@ def difficulty_em(src, pred, gold):
 
 
 def train_model(model, opt, SRC, TRG):
-    # val_data = zip_io_data('list_data_pol/val')
-    test_data = zip_io_data(opt.data_path + '/test')
-    test_predictions = ''
-
     print("training model...")
     model.train()
     start = time.time()
@@ -80,89 +76,126 @@ def train_model(model, opt, SRC, TRG):
             if opt.checkpoint > 0 and ((time.time()-cptime)//60) // opt.checkpoint >= 1:
                 torch.save(model.state_dict(), 'weights/model_weights')
                 cptime = time.time()
-   
-   
+
         print("%dm: epoch %d [%s%s]  %d%%  loss = %.3f\nepoch %d complete, loss = %.03f" %\
         ((time.time() - start)//60, epoch + 1, "".join('#'*(100//5)), "".join(' '*(20-(100//5))), 100, avg_loss, epoch + 1, avg_loss))
 
-        model.eval()  # TODO: this ok?
-        val_losses = []
-        for i, batch in enumerate(opt.val):
+        if opt.calculate_val_loss:
+            model.eval()
+            val_losses = []
+            for i, batch in enumerate(opt.val):
+                src = batch.src.transpose(0, 1).cuda()
+                trg = batch.trg.transpose(0, 1).cuda()
+                trg_input = trg[:, :-1]
+                src_mask, trg_mask = create_masks(src, trg_input, opt)
+                preds = model(src, trg_input, src_mask, trg_mask)
+                ys = trg[:, 1:].contiguous().view(-1)
+                opt.optimizer.zero_grad()
+                loss = F.cross_entropy(preds.view(-1, preds.size(-1)), ys, ignore_index=opt.trg_pad)
+                val_losses.append(loss.item())
 
-            src = batch.src.transpose(0, 1).cuda()
-            trg = batch.trg.transpose(0, 1).cuda()
-            trg_input = trg[:, :-1]
-            src_mask, trg_mask = create_masks(src, trg_input, opt)
-            preds = model(src, trg_input, src_mask, trg_mask)
-            ys = trg[:, 1:].contiguous().view(-1)
-            opt.optimizer.zero_grad()
-            loss = F.cross_entropy(preds.view(-1, preds.size(-1)), ys, ignore_index=opt.trg_pad)
-            val_losses.append(loss.item())
+            print('validation loss:', sum(val_losses)/len(val_losses), '\n')
 
-        print('validation loss:', sum(val_losses)/len(val_losses), '\n')
+        if (epoch + 1) % opt.val_check_every_n == 0:
+            model.eval()
+            val_acc, val_success = 0, 0
+            val_data = zip_io_data(opt.data_path + '/val')
+            for j, e in enumerate(val_data[:opt.n_val]):
+                e_src, e_tgt = e[0], e[1]
+                indexed = []
+                sentence = SRC.preprocess(e_src)
+                pass_bool = False
+                for tok in sentence:
+                    if SRC.vocab.stoi[tok] != 0:
+                        indexed.append(SRC.vocab.stoi[tok])
+                    else:
+                        pass_bool = True
+                        break
+                if pass_bool:
+                    continue
 
-        if epoch != opt.epochs - 1:
-            continue
+                sentence = Variable(torch.LongTensor([indexed]))
+                if opt.device == 0:
+                    sentence = sentence.cuda()
 
-        val_acc, val_success = 0, 0
-        for j, e in enumerate(test_data[:1000]):
-            e_src, e_tgt = e[0], e[1]
-            indexed = []
-            sentence = SRC.preprocess(e_src)
-            pass_bool = False
-            for tok in sentence:
-                if SRC.vocab.stoi[tok] != 0:
-                    indexed.append(SRC.vocab.stoi[tok])
-                else:
-                    print('no tokenization for', tok)
-                    pass_bool = True
-                    break
-            if pass_bool:
-                test_predictions += '\n'
-                continue
+                try:
+                    sentence = beam_search(sentence, model, SRC, TRG, opt)
+                except Exception as e:
+                    continue
+                try:
+                    val_acc += simple_em(sentence, e_tgt)
+                    val_success += 1
+                except Exception as e:
+                    continue
 
-            sentence = Variable(torch.LongTensor([indexed]))
-            if opt.device == 0:
-                sentence = sentence.cuda()
+            if val_success == 0:
+                val_success = 1
+            val_acc = val_acc / val_success
+            print('epoch', epoch, '- val accuracy:', round(val_acc * 100, 2))
+            print()
 
-            try:
-                sentence = beam_search(sentence, model, SRC, TRG, opt)
-            except Exception as e:
-                test_predictions += '\n'
-                continue
-                # beam_errors += 1
-                # print('beam error:', sentence, e_src, e_tgt)
-                # print(e)
 
-            try:
-                val_acc += simple_em(sentence, e_tgt)
-                val_success += 1
-                test_predictions += sentence + '\n'
-                print(sentence, '@@@@', e_tgt)
-            except Exception as e:
-                # print('acc add error:', sentence, e_src, e_tgt)
-                # print(e)
-                test_predictions += '\n'
-                continue
+        if epoch == opt.epochs - 1 and opt.do_test:
+            model.eval()
+            test_data = zip_io_data(opt.data_path + '/test')
+            test_predictions = ''
+            test_acc, test_success = 0, 0
+            for j, e in enumerate(test_data[:opt.n_test]):
+                e_src, e_tgt = e[0], e[1]
+                indexed = []
+                sentence = SRC.preprocess(e_src)
+                pass_bool = False
+                for tok in sentence:
+                    if SRC.vocab.stoi[tok] != 0:
+                        indexed.append(SRC.vocab.stoi[tok])
+                    else:
+                        print('no tokenization for', tok)
+                        pass_bool = True
+                        break
+                if pass_bool:
+                    test_predictions += '\n'
+                    continue
 
-        if val_success == 0:
-            val_success = 1
-        val_acc = val_acc / val_success
-        print('test accuracy:', val_acc, '; successful attempts:', val_success)
-        print()
-        with open('pol_generations.txt', 'w', encoding='utf-8') as f:
-            f.write(test_predictions)
+                sentence = Variable(torch.LongTensor([indexed]))
+                if opt.device == 0:
+                    sentence = sentence.cuda()
+
+                try:
+                    sentence = beam_search(sentence, model, SRC, TRG, opt)
+                except Exception as e:
+                    test_predictions += '\n'
+                    continue
+
+                try:
+                    test_acc += simple_em(sentence, e_tgt)
+                    test_success += 1
+                    test_predictions += sentence + '\n'
+                except Exception as e:
+                    test_predictions += '\n'
+                    continue
+
+            if test_success == 0:
+                test_success = 1
+            test_acc = test_acc / test_success
+            print('test accuracy:', round(test_acc * 100, 2))
+            print()
+            with open(opt.output_dir + 'test_generations.txt', 'w', encoding='utf-8') as f:
+                f.write(test_predictions)
 
 
 def main():
 
     parser = argparse.ArgumentParser()
-    # parser.add_argument('-src_data', required=True)
-    # parser.add_argument('-trg_data', required=True)
     parser.add_argument('-data_path', required=True)
+    parser.add_argument('-output_dir', required=True)
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-SGDR', action='store_true')
-    parser.add_argument('-epochs', type=int, default=15)
+    parser.add_argument('-val_check_every_n', type=int, default=5)
+    parser.add_argument('-calculate_val_loss', action='store_true')
+    parser.add_argument('-n_val', type=int, default=1000)
+    parser.add_argument('-n_test', type=int, default=1000)
+    parser.add_argument('-do_test', action='store_true')
+    parser.add_argument('-epochs', type=int, default=50)
     parser.add_argument('-d_model', type=int, default=512)
     parser.add_argument('-n_layers', type=int, default=6)
     parser.add_argument('-heads', type=int, default=8)
@@ -189,7 +222,7 @@ def main():
 
     # beam search parameters
     opt.k = 3
-    opt.max_len = 500
+    opt.max_len = opt.max_str_len
 
     opt.optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
     if opt.SGDR == True:
