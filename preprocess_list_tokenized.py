@@ -226,18 +226,18 @@ with open('list_task_v2.json', 'r', encoding="utf-8") as input_file:
 
     train_in, train_out = '', ''
     for jx, e in enumerate(train):
-        # if jx % 5000 == 0:
-        #     print(float(jx / len(train) * 100), 'percent complete')
+        if jx % 5000 == 0:
+            print(round(float(jx / len(train) * 100), 2), '% complete')
         subgraphs = get_valid_subgraphs(e)
         for subgraph in subgraphs:
-            train_input = ' @@SEP@@ '.join(subgraph[0])
+            train_input = remove_whitespace(' @@SEP@@ '.join(subgraph[0]).lower().strip())
             train_in += train_input + '\n'
             if type(subgraph[1]) == list:
                 train_out += ' '.join(subgraph[1]) + '\n'
             else:
-                train_out += subgraph[1] + '\n'
+                train_out += remove_whitespace(subgraph[1].strip()) + '\n'
 
-        train_in += ' @@SEP@@ '.join(e['nlg']).lower() + '\n'
+        # train_in += ' @@SEP@@ '.join(e['nlg']).lower() + '\n'
         # train_out += e['tokenized_state'][-1].strip() + '\n'
 
     val_in, val_out = '', ''
@@ -252,7 +252,7 @@ with open('list_task_v2.json', 'r', encoding="utf-8") as input_file:
         test_in += test_input + '\n'
         test_out += e['tokenized_state'][-1].strip() + '\n'
 
-    base_path = './dag_baseline_2/'
+    base_path = './dag_baseline_2a/'
     with open(base_path + 'train_in.txt', 'w', encoding='utf-8') as f:
         f.write(train_in)
 
