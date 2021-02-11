@@ -222,7 +222,7 @@ def main():
 
     # beam search parameters
     opt.k = 3
-    opt.max_len = opt.max_str_len
+    opt.max_len = opt.max_strlen
 
     opt.optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
     if opt.SGDR == True:

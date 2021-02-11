@@ -42,3 +42,14 @@ class ListTokenizer(object):
                 tokenization.append(tok)
 
         return tokenization
+
+
+class StringPieceTokenizer(object):
+    def __init__(self):
+        pass
+
+    def tokenizer(self, sentence):
+        sentence = sentence.lower()
+        sentence = sentence.replace("'", " ' ").replace(",", " , ")
+        sentence = remove_whitespace(sentence)
+        return sentence.split()

@@ -2,7 +2,7 @@ import pandas as pd
 import torchtext
 from torchtext import data
 from collections import Counter, defaultdict
-from Tokenize import ListTokenizer
+from Tokenize import ListTokenizer, StringPieceTokenizer
 from Batch import MyIterator, batch_size_fn
 import os
 import dill as pickle
@@ -40,24 +40,13 @@ def create_fields(opt):
         if "'" not in token:
             vocab_tokens.append(token)
 
-    # add all possible character combinations up to length 3 (building blocks for task)
-    chars = 'abcdefghijklmnopqrstuvwxyz'
-    for c in chars:
-        vocab_tokens.append(c)
-        vocab_tokens.append('%' + c)
-        for c2 in chars:
-            vocab_tokens.append(c + c2)
-            vocab_tokens.append('%' + c + c2)
-            for c3 in chars:
-                vocab_tokens.append(c + c2 + c3)
-                vocab_tokens.append('%' + c + c2 + c3)
-
+    # add string piece tokenization vocabulary
+    vocab_tokens += [x.replace('\n', '') for x in open('string_piece_vocabulary.txt', 'r', encoding='utf-8')]
     vocab_tokens = list(set(vocab_tokens))
-
     vocab_counter = Counter(vocab_tokens)
     vocab_tokens = ['<unk>', '<pad>', '<sos>', '<eos>'] + vocab_tokens
 
-    tokenizer_ = ListTokenizer(opt)
+    tokenizer_ = StringPieceTokenizer()
     TRG = data.Field(lower=True, tokenize=tokenizer_.tokenizer, init_token='<sos>', eos_token='<eos>')
     SRC = data.Field(lower=True, tokenize=tokenizer_.tokenizer)
 
