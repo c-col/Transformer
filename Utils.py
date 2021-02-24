@@ -94,6 +94,14 @@ def eval_split_input(nlg):
         composition_controller.append(step_instructions)
     return composition_controller
 
+
+# compositional training utils
+
+def pred_to_vocab(trg_obj, pred_tensor):
+    return [trg_obj.vocab.itos[x] for x in pred_tensor.tolist() if trg_obj.vocab.itos[x] != '<pad>']
+
+
+
 # def is_valid_dag(nlg):
 #     steps_n = len(nlg)
 #     references = re.findall('@@\d+@@', ' '.join(nlg))
