@@ -2,10 +2,13 @@
 
 This is altered pytorch implementation of the transformer model from <a href=https://towardsdatascience.com/how-to-code-the-transformer-in-pytorch-24db27c8f9ec>Sam Lynn Evans</a>. This version is designed for our list of strings prediction task and includes:
 
-- validation loss calculation
+- validation loss calculation, validation accuracy
 - prediction on test set
 - simple word piece tokenizer (no spacy)
-- updated CLI 
+- updated CLI + flag set
+- composition algorithms at evaluation time
+- tensorboard computational graph viz support
+- new LR scheduler
 
 # Usage
 
