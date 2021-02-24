@@ -62,7 +62,7 @@ def beam_search(src, model, SRC, TRG, opt):
         out = F.softmax(out, dim=-1)
     
         outputs, log_scores = k_best_outputs(outputs, out, log_scores, i, opt.k)
-        ones = (outputs == eos_tok).nonzero()  # Occurrences of end symbols for all input sentences.
+        ones = torch.nonzero(torch.eq(outputs, eos_tok), as_tuple=False)
         sentence_lengths = torch.zeros(len(outputs), dtype=torch.long).cuda()
         for vec in ones:
             i = vec[0]
@@ -79,7 +79,7 @@ def beam_search(src, model, SRC, TRG, opt):
             break
     
     if ind is None:
-        length = (outputs[0] == eos_tok).nonzero()[0]
+        length = torch.nonzero(torch.eq(outputs[0], eos_tok), as_tuple=False)[0]
         built_string = ''
         for tok in outputs[0][1:length]:
             temp_tok = TRG.vocab.itos[tok]
@@ -87,7 +87,7 @@ def beam_search(src, model, SRC, TRG, opt):
         return built_string.strip()
     
     else:
-        length = (outputs[ind] == eos_tok).nonzero()[0]
+        length = torch.nonzero(torch.eq(outputs[ind], eos_tok), as_tuple=False)[0]
         built_string = ''
         for tok in outputs[ind][1:length]:
             temp_tok = TRG.vocab.itos[tok]
