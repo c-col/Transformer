@@ -1,3 +1,4 @@
+import re
 
 def remove_whitespace(string_):
     string_ = str(string_)
@@ -62,3 +63,82 @@ def zip_io_data(path_prefix):
     in_ = [x.replace('\n', '') for x in f_in.readlines()]
     out_ = [x.replace('\n', '') for x in f_out.readlines()]
     return list(zip(in_, out_))
+
+# compositional eval tools
+
+def eval_re_reference():
+    pass
+
+
+def eval_split_input(nlg):
+    composition_controller = []
+
+    steps = nlg.lower().split(' @@sep@@ ')
+    for step_index in range(len(steps)):
+        step_instructions = []
+        references = re.findall('@@\d+@@', steps[step_index])
+        if len(references):
+            step_copy = steps[step_index][:]
+            for reference_index, reference in enumerate(references):
+                index_form = int(reference.replace('@@', '')) - 1
+                step_instructions.append(index_form)
+                step_copy = step_copy.replace(reference, '@@' + str(reference_index + 1) + 'R@@')
+            for reference_index in range(len(references)):
+                ref_string = str(reference_index + 1)
+                step_copy = step_copy.replace('@@' + ref_string + 'R@@', '@@' + ref_string + '@@')
+            step_instructions.append(step_copy)
+        else:
+            # simple terminal node
+            step_instructions.append(steps[step_index])
+
+        composition_controller.append(step_instructions)
+    return composition_controller
+
+# def is_valid_dag(nlg):
+#     steps_n = len(nlg)
+#     references = re.findall('@@\d+@@', ' '.join(nlg))
+#     return len(list(set(references))) + 1 == steps_n
+#
+#
+# def get_valid_subgraphs(example):
+#     states, instructions, tokenized_states = example['state'], example['nlg'], example['tokenized_state']
+#     subgraphs = []
+#     steps_n = len(states)
+#     for steps_index in range(steps_n):
+#         if is_valid_dag(instructions[:steps_index + 1]):
+#             subgraphs.append((instructions[:steps_index + 1], tokenized_states[steps_index]))
+#         else:
+#             new_instructions = prune_and_reference(instructions[:steps_index + 1])
+#             subgraphs.append((new_instructions, tokenized_states[steps_index]))
+#
+#     return subgraphs
+#
+#
+# def prune_and_reference(instructions):
+#     queue = [instructions[-1]]
+#     required_indices = [len(instructions) - 1]
+#     while len(queue):
+#         step = queue.pop(0)
+#         references = re.findall(r'@@\d+@@', step)
+#         indices = [int(x.replace('@@', '')) - 1 for x in references]
+#
+#         required_indices += indices
+#         queue += [instructions[index] for index in indices]
+#
+#     prior_removals = 0
+#     pruned_instructions = []
+#     for index, instruction in enumerate(instructions):
+#         if index not in required_indices:
+#             prior_removals += 1
+#
+#         else:
+#             if prior_removals > 0:
+#                 for ref_index, referencer in enumerate(instructions[index + 1:]):
+#                     if '@@' + str(index + 1) + '@@' in referencer:
+#                         instructions[index + ref_index + 1] = instructions[index + ref_index + 1].replace(
+#                             '@@' + str(index + 1) + '@@', '@@' + str(index + 1 - prior_removals) + '@@'
+#                         )
+#
+#             pruned_instructions.append(instruction)
+#
+#     return pruned_instructions

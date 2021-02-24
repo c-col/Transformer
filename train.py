@@ -10,6 +10,8 @@ from Batch import create_masks
 from Beam import beam_search
 from torch.autograd import Variable
 import dill as pickle
+from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 
 def simple_em(pred, gold):
@@ -36,7 +38,7 @@ def train_model(model, opt, SRC, TRG):
         cptime = time.time()
                  
     for epoch in range(opt.epochs):
-        model.train()  # TODO: this ok?
+        model.train()
         total_loss = 0
         if opt.floyd is False:
             print("   %dm: epoch %d [%s]  %d%%  loss = %s" %\
@@ -45,8 +47,7 @@ def train_model(model, opt, SRC, TRG):
         if opt.checkpoint > 0:
             torch.save(model.state_dict(), 'weights/model_weights')
 
-        for i, batch in enumerate(opt.train): 
-
+        for i, batch in enumerate(opt.train):
             src = batch.src.transpose(0, 1).cuda()
             trg = batch.trg.transpose(0, 1).cuda()
             trg_input = trg[:, :-1]
@@ -57,11 +58,12 @@ def train_model(model, opt, SRC, TRG):
             loss = F.cross_entropy(preds.view(-1, preds.size(-1)), ys, ignore_index=opt.trg_pad)
             loss.backward()
             opt.optimizer.step()
-            if opt.SGDR == True: 
+
+            if opt.SGDR:
                 opt.sched.step()
-            
+
             total_loss += loss.item()
-            
+
             if (i + 1) % opt.printevery == 0:
                  p = int(100 * (i + 1) / opt.train_len)
                  avg_loss = total_loss/opt.printevery
@@ -72,7 +74,7 @@ def train_model(model, opt, SRC, TRG):
                     print("   %dm: epoch %d [%s%s]  %d%%  loss = %.3f" %\
                     ((time.time() - start)//60, epoch + 1, "".join('#'*(p//5)), "".join(' '*(20-(p//5))), p, avg_loss))
                  total_loss = 0
-            
+
             if opt.checkpoint > 0 and ((time.time()-cptime)//60) // opt.checkpoint >= 1:
                 torch.save(model.state_dict(), 'weights/model_weights')
                 cptime = time.time()
@@ -102,38 +104,75 @@ def train_model(model, opt, SRC, TRG):
             val_data = zip_io_data(opt.data_path + '/val')
             for j, e in enumerate(val_data[:opt.n_val]):
                 e_src, e_tgt = e[0], e[1]
-                indexed = []
-                sentence = SRC.preprocess(e_src)
-                pass_bool = False
-                for tok in sentence:
-                    if SRC.vocab.stoi[tok] != 0:
-                        indexed.append(SRC.vocab.stoi[tok])
-                    else:
-                        pass_bool = True
-                        break
-                if pass_bool:
-                    continue
 
-                sentence = Variable(torch.LongTensor([indexed]))
-                if opt.device == 0:
-                    sentence = sentence.cuda()
+                if opt.compositional_eval:
+                    controller = eval_split_input(e_src)
+                    intermediates = []
+                    comp_failure = False
+                    for controller_input in controller:
+                        if len(controller_input) == 1:
+                            controller_src = controller_input[0]
 
-                try:
-                    sentence = beam_search(sentence, model, SRC, TRG, opt)
-                except Exception as e:
-                    continue
-                try:
-                    val_acc += simple_em(sentence, e_tgt)
-                    val_success += 1
-                except Exception as e:
-                    continue
+                        else:
+                            controller_src = ''
+                            for src_index in range(len(controller_input) - 1):
+                                controller_src += intermediates[controller_input[src_index]] + ' @@sep@@ '
+                            controller_src += controller_input[-1]
+                            controller_src = remove_whitespace(controller_src)
+
+                        indexed = []
+                        sentence = SRC.preprocess(controller_src)
+                        for tok in sentence:
+                            if SRC.vocab.stoi[tok] != 0:
+                                indexed.append(SRC.vocab.stoi[tok])
+                            else:
+                                comp_failure = True
+                                break
+                        if comp_failure:
+                            break
+
+                        sentence = Variable(torch.LongTensor([indexed]))
+                        if opt.device == 0:
+                            sentence = sentence.cuda()
+
+                        try:
+                            sentence = beam_search(sentence, model, SRC, TRG, opt)
+                            intermediates.append(sentence)
+                        except Exception as e:
+                            comp_failure = True
+
+                            break
+
+                    if not comp_failure:
+                        try:
+                            val_acc += simple_em(intermediates[-1], e_tgt)
+                            val_success += 1
+                        except Exception as e:
+                            continue
+                else:
+                    sentence = SRC.preprocess(e_src)
+                    indexed = [SRC.vocab.stoi[tok] for tok in sentence]
+
+                    sentence = Variable(torch.LongTensor([indexed]))
+                    if opt.device == 0:
+                        sentence = sentence.cuda()
+
+                    try:
+                        sentence = beam_search(sentence, model, SRC, TRG, opt)
+                    except Exception as e:
+                        continue
+                    try:
+                        val_acc += simple_em(sentence, e_tgt)
+                        val_success += 1
+                    except Exception as e:
+                        continue
 
             if val_success == 0:
                 val_success = 1
             val_acc = val_acc / val_success
             print('epoch', epoch, '- val accuracy:', round(val_acc * 100, 2))
             print()
-
+            opt.scheduler.step(val_acc)
 
         if epoch == opt.epochs - 1 and opt.do_test:
             model.eval()
@@ -141,57 +180,110 @@ def train_model(model, opt, SRC, TRG):
             test_predictions = ''
             test_acc, test_success = 0, 0
             for j, e in enumerate(test_data[:opt.n_test]):
+                if (j + 1) % 10000 == 0:
+                    print(round(j/len(test_data) * 100, 2), '% complete with testing')
                 e_src, e_tgt = e[0], e[1]
-                indexed = []
-                sentence = SRC.preprocess(e_src)
-                pass_bool = False
-                for tok in sentence:
-                    if SRC.vocab.stoi[tok] != 0:
-                        indexed.append(SRC.vocab.stoi[tok])
+
+                if opt.compositional_eval:
+                    controller = eval_split_input(e_src)
+                    intermediates = []
+                    comp_failure = False
+                    for controller_input in controller:
+                        if len(controller_input) == 1:
+                            controller_src = controller_input[0]
+
+                        else:
+                            controller_src = ''
+                            for src_index in range(len(controller_input) - 1):
+                                controller_src += intermediates[controller_input[src_index]] + ' @@sep@@ '
+                            controller_src += controller_input[-1]
+                            controller_src = remove_whitespace(controller_src)
+
+                        indexed = []
+                        sentence = SRC.preprocess(controller_src)
+                        for tok in sentence:
+                            if SRC.vocab.stoi[tok] != 0:
+                                indexed.append(SRC.vocab.stoi[tok])
+                            else:
+                                comp_failure = True
+                                break
+                        if comp_failure:
+                            break
+
+                        sentence = Variable(torch.LongTensor([indexed]))
+                        if opt.device == 0:
+                            sentence = sentence.cuda()
+
+                        try:
+                            sentence = beam_search(sentence, model, SRC, TRG, opt)
+                            intermediates.append(sentence)
+                        except Exception as e:
+                            comp_failure = True
+                            break
+
+                    if not comp_failure:
+                        try:
+                            test_acc += simple_em(sentence, e_tgt)
+                            test_success += 1
+                            test_predictions += sentence + '\n'
+                        except Exception as e:
+                            test_predictions += '\n'
+                            continue
                     else:
-                        print('no tokenization for', tok)
-                        pass_bool = True
-                        break
-                if pass_bool:
-                    test_predictions += '\n'
-                    continue
+                        test_predictions += '\n'
+                else:
+                    indexed = []
+                    sentence = SRC.preprocess(e_src)
+                    pass_bool = False
+                    for tok in sentence:
+                        if SRC.vocab.stoi[tok] != 0:
+                            indexed.append(SRC.vocab.stoi[tok])
+                        else:
+                            pass_bool = True
+                            break
+                    if pass_bool:
+                        continue
 
-                sentence = Variable(torch.LongTensor([indexed]))
-                if opt.device == 0:
-                    sentence = sentence.cuda()
+                    sentence = Variable(torch.LongTensor([indexed]))
+                    if opt.device == 0:
+                        sentence = sentence.cuda()
 
-                try:
-                    sentence = beam_search(sentence, model, SRC, TRG, opt)
-                except Exception as e:
-                    test_predictions += '\n'
-                    continue
+                    try:
+                        sentence = beam_search(sentence, model, SRC, TRG, opt)
+                    except Exception as e:
+                        continue
+                    try:
+                        test_acc += simple_em(sentence, e_tgt)
+                        test_success += 1
+                        test_predictions += sentence + '\n'
+                    except Exception as e:
+                        test_predictions += '\n'
+                        continue
 
-                try:
-                    test_acc += simple_em(sentence, e_tgt)
-                    test_success += 1
-                    test_predictions += sentence + '\n'
-                except Exception as e:
-                    test_predictions += '\n'
-                    continue
 
             if test_success == 0:
                 test_success = 1
             test_acc = test_acc / test_success
             print('test accuracy:', round(test_acc * 100, 2))
             print()
-            with open(opt.output_dir + 'test_generations.txt', 'w', encoding='utf-8') as f:
+
+            if not os.path.exists(opt.output_dir):
+                os.makedirs(opt.output_dir)
+
+            with open(opt.output_dir + '/test_generations.txt', 'w', encoding='utf-8') as f:
                 f.write(test_predictions)
 
 
 def main():
-
     parser = argparse.ArgumentParser()
     parser.add_argument('-data_path', required=True)
     parser.add_argument('-output_dir', required=True)
     parser.add_argument('-no_cuda', action='store_true')
     parser.add_argument('-SGDR', action='store_true')
-    parser.add_argument('-val_check_every_n', type=int, default=5)
+    parser.add_argument('-val_check_every_n', type=int, default=3)
     parser.add_argument('-calculate_val_loss', action='store_true')
+    parser.add_argument('-tensorboard_graph', action='store_true')
+    parser.add_argument('-compositional_eval', action='store_true')
     parser.add_argument('-n_val', type=int, default=1000)
     parser.add_argument('-n_test', type=int, default=1000)
     parser.add_argument('-do_test', action='store_true')
@@ -202,7 +294,7 @@ def main():
     parser.add_argument('-dropout', type=int, default=0.1)
     parser.add_argument('-batchsize', type=int, default=3000)
     parser.add_argument('-printevery', type=int, default=100)
-    parser.add_argument('-lr', type=int, default=0.00006)
+    parser.add_argument('-lr', type=int, default=0.0001)
     parser.add_argument('-load_weights')
     parser.add_argument('-create_valset', action='store_true')
     parser.add_argument('-max_strlen', type=int, default=512)
@@ -210,7 +302,7 @@ def main():
     parser.add_argument('-checkpoint', type=int, default=0)
 
     opt = parser.parse_args()
-    
+
     opt.device = 0 if opt.no_cuda is False else -1
     if opt.device == 0:
         assert torch.cuda.is_available()
@@ -220,26 +312,35 @@ def main():
     opt.train, opt.val = create_dataset(opt, SRC, TRG)
     model = get_model(opt, len(SRC.vocab), len(TRG.vocab))
 
+    if opt.tensorboard_graph:
+        writer = SummaryWriter('runs')
+        for i, batch in enumerate(opt.train):
+            src = batch.src.transpose(0, 1).cuda()
+            trg = batch.trg.transpose(0, 1).cuda()
+            trg_input = trg[:, :-1]
+            src_mask, trg_mask = create_masks(src, trg_input, opt)
+            writer.add_graph(model, (src, trg_input, src_mask, trg_mask))
+            break
+        writer.close()
+
     # beam search parameters
-    opt.k = 3
+    opt.k = 1
     opt.max_len = opt.max_strlen
 
     opt.optimizer = torch.optim.Adam(model.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
-    if opt.SGDR == True:
+    opt.scheduler = ReduceLROnPlateau(opt.optimizer, factor=0.2, patience=5, verbose=True)
+
+    if opt.SGDR:
         opt.sched = CosineWithRestarts(opt.optimizer, T_max=opt.train_len)
 
     if opt.checkpoint > 0:
         print("model weights will be saved every %d minutes and at end of epoch to directory weights/"%(opt.checkpoint))
     
-    if opt.load_weights is not None and opt.floyd is not None:
-        os.mkdir('weights')
-        pickle.dump(SRC, open('weights/SRC.pkl', 'wb'))
-        pickle.dump(TRG, open('weights/TRG.pkl', 'wb'))
-    
     train_model(model, opt, SRC, TRG)
 
     if opt.floyd is False:
         promptNextAction(model, opt, SRC, TRG)
+
 
 def yesno(response):
     while True:
@@ -248,10 +349,9 @@ def yesno(response):
         else:
             return response
 
-def promptNextAction(model, opt, SRC, TRG):
 
+def promptNextAction(model, opt, SRC, TRG):
     saved_once = 1 if opt.load_weights is not None or opt.checkpoint > 0 else 0
-    
     if opt.load_weights is not None:
         dst = opt.load_weights
     if opt.checkpoint > 0:
@@ -305,7 +405,8 @@ def promptNextAction(model, opt, SRC, TRG):
         else:
             print("exiting program...")
             break
-
     # for asking about further training use while true loop, and return
+
+
 if __name__ == "__main__":
     main()

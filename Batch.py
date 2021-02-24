@@ -5,20 +5,19 @@ from torch.autograd import Variable
 
 
 def nopeak_mask(size, opt):
-    np_mask = np.triu(np.ones((1, size, size)),
-    k=1).astype('uint8')
-    np_mask =  Variable(torch.from_numpy(np_mask) == 0)
+    np_mask = np.triu(np.ones((1, size, size)), k=1).astype('uint8')
+    np_mask = Variable(torch.from_numpy(np_mask) == 0)
     if opt.device == 0:
-      np_mask = np_mask.cuda()
+        np_mask = np_mask.cuda()
     return np_mask
 
+
 def create_masks(src, trg, opt):
-    
     src_mask = (src != opt.src_pad).unsqueeze(-2)
 
     if trg is not None:
         trg_mask = (trg != opt.trg_pad).unsqueeze(-2)
-        size = trg.size(1) # get seq_len for matrix
+        size = trg.size(1)  # get seq_len for matrix
         np_mask = nopeak_mask(size, opt)
         if trg.is_cuda:
             np_mask.cuda()
@@ -31,6 +30,7 @@ def create_masks(src, trg, opt):
 # patch on Torchtext's batching process that makes it more efficient
 # from http://nlp.seas.harvard.edu/2018/04/03/attention.html#position-wise-feed-forward-networks
 
+
 class MyIterator(data.Iterator):
     def create_batches(self):
         if self.train:
@@ -42,14 +42,14 @@ class MyIterator(data.Iterator):
                     for b in random_shuffler(list(p_batch)):
                         yield b
             self.batches = pool(self.data(), self.random_shuffler)
-            
         else:
             self.batches = []
-            for b in data.batch(self.data(), self.batch_size,
-                                          self.batch_size_fn):
+            for b in data.batch(self.data(), self.batch_size, self.batch_size_fn):
                 self.batches.append(sorted(b, key=self.sort_key))
 
+
 global max_src_in_batch, max_tgt_in_batch
+
 
 def batch_size_fn(new, count, sofar):
     "Keep augmenting batch and calculate total number of tokens + padding."
