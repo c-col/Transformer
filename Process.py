@@ -97,9 +97,14 @@ def create_dataset(opt, SRC, TRG):
     val = data.TabularDataset('./translate_transformer_temp.csv', format='csv', fields=data_fields)
     os.remove('translate_transformer_temp.csv')
 
-    val_iter = MyIterator(val, batch_size=opt.batchsize,
-                          repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
-                          batch_size_fn=batch_size_fn, train=False, shuffle=False)
+    if opt.batchsize == 1:
+        val_iter = MyIterator(val, batch_size=opt.batchsize,
+                              repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                              train=False, shuffle=False)
+    else:
+        val_iter = MyIterator(val, batch_size=opt.batchsize,
+                              repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                              batch_size_fn=batch_size_fn, train=False, shuffle=False)
 
     ##### TRAIN DATA #####
     raw_data = {'src' : [line for line in opt.src_data], 'trg': [line for line in opt.trg_data]}
@@ -112,9 +117,14 @@ def create_dataset(opt, SRC, TRG):
     data_fields = [('src', SRC), ('trg', TRG)]
     train = data.TabularDataset('./translate_transformer_temp.csv', format='csv', fields=data_fields)
 
-    train_iter = MyIterator(train, batch_size=opt.batchsize, # device=opt.device,
-                        repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
-                        batch_size_fn=batch_size_fn, train=True, shuffle=True)
+    if opt.batchsize == 1:
+        train_iter = MyIterator(train, batch_size=opt.batchsize, # device=opt.device,
+                                repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                                train=True, shuffle=True)
+    else:
+        train_iter = MyIterator(train, batch_size=opt.batchsize,  # device=opt.device,
+                                repeat=False, sort_key=lambda x: (len(x.src), len(x.trg)),
+                                batch_size_fn=batch_size_fn, train=True, shuffle=True)
 
     os.remove('translate_transformer_temp.csv')
 
@@ -135,9 +145,6 @@ def create_dataset(opt, SRC, TRG):
 
     return train_iter, val_iter
 
-def get_len(train):
 
-    for i, b in enumerate(train):
-        pass
-    
-    return i
+def get_len(train):
+    return len(list(train))
