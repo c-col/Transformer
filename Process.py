@@ -147,4 +147,9 @@ def create_dataset(opt, SRC, TRG):
 
 
 def get_len(train):
-    return len(list(train))
+    try:
+        return len(list(train))
+    except NotImplementedError:
+        for _, i in enumerate(train):
+            pass
+        return i
